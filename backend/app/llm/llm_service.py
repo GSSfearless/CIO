@@ -1,61 +1,13 @@
 """
-LLM服务模块，集成OpenAI等LLM服务
+LLM服务模块，集成多种LLM服务
 """
-import json
-from typing import Dict, List, Literal, Optional, Union, Any
-
-from openai import AsyncOpenAI
-from pydantic import BaseModel
+import os
+from typing import Dict, List, Optional, Union, Any
 
 from app.config import config
 from app.utils import logger
-
-
-class Message(BaseModel):
-    """消息模型"""
-    role: Literal["system", "user", "assistant", "tool"] = "user"
-    content: Optional[str] = None
-    tool_calls: Optional[List[Dict[str, Any]]] = None
-    tool_call_id: Optional[str] = None
-    name: Optional[str] = None
-    
-    @classmethod
-    def system_message(cls, content: str) -> "Message":
-        """创建系统消息"""
-        return cls(role="system", content=content)
-    
-    @classmethod
-    def user_message(cls, content: str) -> "Message":
-        """创建用户消息"""
-        return cls(role="user", content=content)
-    
-    @classmethod
-    def assistant_message(cls, content: str) -> "Message":
-        """创建助手消息"""
-        return cls(role="assistant", content=content)
-    
-    @classmethod
-    def tool_message(cls, content: str, tool_call_id: str) -> "Message":
-        """创建工具消息"""
-        return cls(role="tool", content=content, tool_call_id=tool_call_id)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """转换为字典"""
-        result = {"role": self.role}
-        
-        if self.content is not None:
-            result["content"] = self.content
-        
-        if self.tool_calls is not None:
-            result["tool_calls"] = self.tool_calls
-        
-        if self.tool_call_id is not None:
-            result["tool_call_id"] = self.tool_call_id
-            
-        if self.name is not None:
-            result["name"] = self.name
-            
-        return result
+from app.llm.message import Message
+from app.llm.llm_adapters import create_llm_adapter, LLMAdapter
 
 
 class LLMService:
@@ -73,7 +25,7 @@ class LLMService:
     
     def __init__(self, config_name: str = "default"):
         """初始化"""
-        if not hasattr(self, "client"):
+        if not hasattr(self, "adapter"):
             llm_config = config.llm.get(config_name)
             if not llm_config:
                 raise ValueError(f"LLM配置 '{config_name}' 不存在")
@@ -81,13 +33,20 @@ class LLMService:
             self.model = llm_config.model
             self.max_tokens = llm_config.max_tokens
             self.temperature = llm_config.temperature
-            self.api_key = llm_config.api_key
-            self.api_base_url = llm_config.api_base_url
             
-            self.client = AsyncOpenAI(
-                api_key=self.api_key,
-                base_url=self.api_base_url
+            # 创建适配器
+            provider = llm_config.provider or os.environ.get("LLM_PROVIDER", "zhipu")
+            
+            # 根据provider创建适配器
+            self.adapter = create_llm_adapter(
+                provider=provider,
+                api_key=llm_config.api_key,
+                model=self.model,
+                max_tokens=self.max_tokens,
+                temperature=self.temperature
             )
+            
+            logger.info(f"已初始化LLM服务，使用提供商: {provider}，模型: {self.model}")
     
     @staticmethod
     def format_messages(messages: List[Union[dict, Message]]) -> List[dict]:
@@ -133,44 +92,21 @@ class LLMService:
             else:
                 messages = self.format_messages(messages)
             
-            if not stream:
-                # 非流式请求
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    max_tokens=self.max_tokens,
-                    temperature=temperature or self.temperature,
-                    stream=False,
-                )
-                
-                if not response.choices or not response.choices[0].message.content:
-                    raise ValueError("LLM响应为空或无效")
-                
-                return response.choices[0].message.content
+            # 使用适配器进行聊天
+            if stream:
+                logger.warning("当前版本不支持流式请求，将使用普通请求")
             
-            # 流式请求
-            response = await self.client.chat.completions.create(
-                model=self.model,
+            response = await self.adapter.chat(
                 messages=messages,
-                max_tokens=self.max_tokens,
                 temperature=temperature or self.temperature,
-                stream=True,
+                max_tokens=self.max_tokens
             )
             
-            collected_messages = []
-            async for chunk in response:
-                chunk_message = chunk.choices[0].delta.content or ""
-                collected_messages.append(chunk_message)
+            return response
             
-            full_response = "".join(collected_messages).strip()
-            if not full_response:
-                raise ValueError("LLM流式响应为空")
-            
-            return full_response
-        
         except Exception as e:
             logger.error(f"LLM请求错误: {e}")
-            raise
+            return f"LLM请求错误: {str(e)}"
     
     async def chat_with_tools(
         self,
@@ -182,7 +118,11 @@ class LLMService:
     ):
         """
         使用工具功能与LLM交互
+        
+        注意：此功能目前仅OpenAI和部分模型支持
         """
+        logger.warning("chat_with_tools功能可能不被所有模型支持")
+        
         try:
             # 格式化消息
             if system_msgs:
@@ -198,22 +138,83 @@ class LLMService:
             if tool_choice:
                 kwargs["tool_choice"] = tool_choice
             
-            # 发送请求
-            response = await self.client.chat.completions.create(
-                model=self.model,
+            # 使用适配器进行工具调用
+            # 注意: 并非所有适配器都支持此功能
+            response = await self.adapter.chat(
                 messages=messages,
                 temperature=temperature or self.temperature,
-                max_tokens=self.max_tokens,
-                **kwargs,
+                **kwargs
             )
             
-            # 检查响应是否有效
-            if not response.choices or not response.choices[0].message:
-                logger.error(f"无效或空的LLM响应: {response}")
-                raise ValueError("LLM响应无效或为空")
-            
-            return response.choices[0].message
+            return response
         
         except Exception as e:
             logger.error(f"LLM工具调用错误: {e}")
-            raise 
+            raise
+
+
+async def process_query(
+    query: str,
+    focus_id: Optional[str] = None,
+    context_info: Optional[List[Dict[str, Any]]] = None,
+    show_reasoning: bool = False
+) -> str:
+    """
+    处理用户查询
+    
+    Args:
+        query: 用户查询内容
+        focus_id: 关注点ID
+        context_info: 上下文信息列表
+        show_reasoning: 是否显示推理过程
+        
+    Returns:
+        str: 处理结果
+    """
+    # 导入工具代理
+    from app.agents.tool_agent import ToolAgent
+    
+    try:
+        # 创建工具代理
+        agent = ToolAgent()
+        
+        # 准备上下文信息
+        context = ""
+        if context_info:
+            context = "相关上下文信息:\n"
+            for i, info in enumerate(context_info, 1):
+                context += f"{i}. {info.get('title', '无标题')}: {info.get('content', '无内容')[:200]}...\n"
+        
+        # 如果有关注点，添加到上下文
+        if focus_id:
+            try:
+                from app.models.pocketbase import PocketBase
+                
+                db = PocketBase()
+                focus_point = await db.get_record("focus_points", focus_id)
+                
+                if focus_point:
+                    if context:
+                        context += "\n"
+                    context += f"当前关注点: {focus_point.get('focuspoint', '')}\n"
+                    explanation = focus_point.get('explanation')
+                    if explanation:
+                        context += f"关注点说明: {explanation}\n"
+            except Exception as e:
+                logger.error(f"获取关注点信息失败: {e}")
+        
+        # 处理查询，显示或隐藏推理过程
+        response = await agent.process(
+            query, 
+            context=context if context else None,
+            show_reasoning=show_reasoning
+        )
+        
+        # 清理资源
+        await agent.cleanup()
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"处理查询失败: {e}")
+        return f"处理查询时出现错误: {str(e)}" 

@@ -221,4 +221,120 @@ class PocketBase:
             return True
         except Exception as e:
             logger.error(f"删除记录时出错: {e}")
-            return False 
+            return False
+    
+    async def find_by_field(self, collection: str, field: str, value: Any) -> Optional[Dict[str, Any]]:
+        """
+        按字段查找记录
+        
+        Args:
+            collection: 集合名称
+            field: 字段名
+            value: 字段值
+            
+        Returns:
+            Optional[Dict[str, Any]]: 找到的记录或None
+        """
+        if isinstance(value, str):
+            # 如果值是字符串，需要加引号
+            filter_str = f'{field}="{value}"'
+        else:
+            filter_str = f'{field}={value}'
+        
+        try:
+            result = await self.list_records(collection, filter_str=filter_str, per_page=1)
+            items = result.get("items", [])
+            
+            if items:
+                return items[0]
+            return None
+        except Exception as e:
+            logger.error(f"按字段查找记录时出错: {e}")
+            return None
+    
+    async def get_collection_list(
+        self,
+        collection: str,
+        filter_params: Optional[Dict[str, Any]] = None,
+        skip: int = 0,
+        limit: int = 100,
+        sort: Optional[List[str]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        获取集合列表，支持复杂过滤
+        
+        Args:
+            collection: 集合名称
+            filter_params: 过滤参数
+            skip: 跳过的记录数
+            limit: 返回的最大记录数
+            sort: 排序参数，例如["-created"]
+            
+        Returns:
+            List[Dict[str, Any]]: 记录列表
+        """
+        # 计算页码和每页记录数
+        page = (skip // limit) + 1
+        per_page = limit
+        
+        # 构建过滤条件
+        filter_str = ""
+        if filter_params:
+            conditions = []
+            for key, value in filter_params.items():
+                if isinstance(value, dict):
+                    # 处理复杂条件，如 {"$gte": 10}
+                    for op, op_value in value.items():
+                        if op == "$gte":
+                            conditions.append(f'{key}>={op_value}')
+                        elif op == "$lte":
+                            conditions.append(f'{key}<={op_value}')
+                        elif op == "$gt":
+                            conditions.append(f'{key}>{op_value}')
+                        elif op == "$lt":
+                            conditions.append(f'{key}<{op_value}')
+                        elif op == "$eq":
+                            if isinstance(op_value, str):
+                                conditions.append(f'{key}="{op_value}"')
+                            else:
+                                conditions.append(f'{key}={op_value}')
+                        elif op == "$ne":
+                            if isinstance(op_value, str):
+                                conditions.append(f'{key}!="{op_value}"')
+                            else:
+                                conditions.append(f'{key}!={op_value}')
+                        elif op == "$in":
+                            values_str = ", ".join([f'"{v}"' if isinstance(v, str) else str(v) for v in op_value])
+                            conditions.append(f'{key} ~ [{values_str}]')
+                        elif op == "$containsAny":
+                            # 对于数组字段，使用特殊语法
+                            values_str = ", ".join([f'"{v}"' if isinstance(v, str) else str(v) for v in op_value])
+                            conditions.append(f'{key} ?~ [{values_str}]')
+                elif isinstance(value, str):
+                    conditions.append(f'{key}="{value}"')
+                elif isinstance(value, (bool, int, float)):
+                    conditions.append(f'{key}={str(value).lower() if isinstance(value, bool) else value}')
+                elif value is None:
+                    conditions.append(f'{key}=null')
+            
+            if conditions:
+                filter_str = " && ".join(conditions)
+        
+        # 构建排序条件
+        sort_str = ""
+        if sort:
+            sort_str = ",".join(sort)
+        
+        try:
+            result = await self.list_records(
+                collection,
+                filter_str=filter_str,
+                sort=sort_str,
+                page=page,
+                per_page=per_page
+            )
+            
+            return result.get("items", [])
+        except Exception as e:
+            logger.error(f"获取集合列表时出错: {e}")
+            return [] 

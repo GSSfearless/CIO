@@ -19,6 +19,7 @@ class QueryRequest(BaseModel):
     query: str
     focus_id: Optional[str] = None
     context_info_ids: Optional[List[str]] = []  # 可选的上下文信息ID列表
+    show_reasoning: bool = False  # 是否在响应中显示推理过程
 
 class QueryResponse(BaseModel):
     query_id: str
@@ -44,6 +45,8 @@ async def create_query(
 ):
     """
     处理用户查询并获取响应
+    
+    如果设置show_reasoning=true，将返回工具代理的推理过程
     """
     try:
         # 检查关联的focus_id是否存在（如果提供了）
@@ -68,7 +71,8 @@ async def create_query(
         response = await process_query(
             query_request.query, 
             focus_id=query_request.focus_id,
-            context_info=context_info
+            context_info=context_info,
+            show_reasoning=query_request.show_reasoning
         )
         
         # 创建查询记录

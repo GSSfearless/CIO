@@ -47,6 +47,28 @@
    - 创建类型定义
    - 实现基本布局和首页
 
+9. **工具代理系统**
+   - 实现工具抽象层(agents/tools/base_tool.py)
+   - 实现搜索工具(agents/tools/search_tool.py)
+   - 实现数据库查询工具(agents/tools/database_tool.py)
+   - 实现网页抓取工具(agents/tools/web_tool.py)
+   - 实现自主工具选择代理(agents/tool_agent.py)
+   - 集成工具代理到查询API
+
+10. **国内大模型支持**
+    - 实现LLM适配器层(llm/llm_adapters.py)
+    - 支持智谱AI(ZhipuAdapter)
+    - 支持百度文心一言(BaiduAdapter)
+    - 支持讯飞星火(XunfeiAdapter)
+    - 重构LLM服务以使用适配器
+
+11. **工具代理增强**
+    - 实现工具使用状态跟踪
+    - 增强工具使用循环和决策逻辑
+    - 添加多轮工具使用和自主决策能力
+    - 实现推理过程可视化
+    - 优化工具使用效率和准确性
+
 ### 待完成工作
 
 1. **前端界面完善**
