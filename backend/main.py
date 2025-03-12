@@ -10,6 +10,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api import api_router
 from app.config import config
 from app.utils import logger
 
@@ -29,6 +30,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 注册API路由
+app.include_router(api_router, prefix="/api/v1")
 
 
 @app.get("/")
@@ -54,7 +58,12 @@ async def startup_event():
     logger.info("CIO应用启动中...")
     
     # 确保工作目录存在
-    work_dir = Path(config.app.project_dir)
+    # 在Vercel环境中，我们使用/tmp目录
+    if os.environ.get("VERCEL"):
+        work_dir = Path("/tmp") / config.app.project_dir
+    else:
+        work_dir = Path(config.app.project_dir)
+    
     work_dir.mkdir(parents=True, exist_ok=True)
     
     logger.info(f"工作目录: {work_dir.absolute()}")
