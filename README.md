@@ -1,4 +1,4 @@
-# CIO (Customized Information Organizer)
+# CIO
 
 CIO是一个个性化信息管理和查询系统，旨在帮助用户自动收集、组织和查询与其关注点相关的信息。
 
